@@ -238,6 +238,8 @@ const BLOCK_SIZE = 30;
 
 let canvas = document.getElementById('board');
 let ctx = canvas.getContext('2d');
+// FIX: We must scale the main canvas exactly once so blocks aren't 1 pixel tiny!
+ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 const SoundEngine = {
