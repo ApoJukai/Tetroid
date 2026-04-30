@@ -1,7 +1,8 @@
-// --- FIREBASE INTEGRATION ---
+// --- FIREBASE INTEGRATION & AUTH ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-analytics.js";
 import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyChwSowRGkPaPyUvj6vjrpiHUSTjDCdsVU",
@@ -17,17 +18,112 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 const db = getFirestore(app);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
+
+// --- View State Elements ---
+const loginView = document.getElementById('login-view');
+const profileView = document.getElementById('profile-view');
+const gameView = document.getElementById('game-view');
+
+const loginBtn = document.getElementById('google-login-btn');
+const logoutBtn = document.getElementById('logout-btn');
+const authError = document.getElementById('auth-error');
+const dashboardName = document.getElementById('dashboard-name');
+
+let currentUser = null;
+
+// --- AUTHENTICATION LOGIC ---
+// Listen for user login/logout state changes
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        currentUser = user;
+        dashboardName.innerText = user.displayName ? user.displayName.toUpperCase() : "GUEST";
+        loginView.classList.add('hidden');
+        profileView.classList.remove('hidden');
+    } else {
+        currentUser = null;
+        profileView.classList.add('hidden');
+        gameView.classList.add('hidden');
+        loginView.classList.remove('hidden');
+    }
+});
+
+// Login Button Click
+loginBtn.addEventListener('click', async () => {
+    try {
+        authError.style.display = 'none';
+        loginBtn.innerText = "CONNECTING...";
+        await signInWithPopup(auth, provider);
+        // onAuthStateChanged will handle the UI switch
+    } catch (error) {
+        console.error("Auth Error:", error);
+        authError.innerText = "Login failed. Please try again.";
+        authError.style.display = 'block';
+        loginBtn.innerText = "🎮 SIGN IN WITH GOOGLE";
+    }
+});
+
+// Logout Button Click
+logoutBtn.addEventListener('click', () => {
+    signOut(auth);
+});
+
+// --- Pre-Game Profile Setup Logic ---
+let selectedAvatar = '🦊';
+document.querySelectorAll('.avatar-option').forEach(option => {
+    option.addEventListener('click', () => {
+        document.querySelectorAll('.avatar-option').forEach(opt => opt.classList.remove('selected'));
+        option.classList.add('selected');
+        selectedAvatar = option.innerText;
+    });
+});
+
+const bgmSelect = document.getElementById('bgm-select');
+const uiAvatar = document.getElementById('ui-avatar');
+const uiName = document.getElementById('ui-name');
+const bgMusic = document.getElementById('bg-music');
+if (bgMusic) bgMusic.volume = 0.3; 
+
+// Play Solo Click
+document.getElementById('play-solo-btn').addEventListener('click', () => {
+    // Populate Game UI with user data
+    uiName.innerText = currentUser ? (currentUser.displayName || "GUEST") : "GUEST";
+    uiAvatar.innerText = selectedAvatar;
+    
+    // Audio Context & Music Setup
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (bgmSelect) {
+        const selectedTrack = bgmSelect.value;
+        if (selectedTrack === 'none' && bgMusic) {
+            bgMusic.pause();
+            bgMusic.removeAttribute('src'); 
+        } else if (bgMusic) {
+            bgMusic.src = selectedTrack;
+            bgMusic.play().catch(e => console.log("Music file missing."));
+        }
+    }
+    
+    // Switch views and start game
+    profileView.classList.add('hidden');
+    gameView.classList.remove('hidden');
+    startGame();
+});
+
+// Battle Online Stub
+document.getElementById('find-match-btn').addEventListener('click', () => {
+    alert("Matchmaking and Battle Arena are coming in Part 2! Enjoy Solo mode for now.");
+});
 
 // --- Game Constants & Audio Engine ---
 const COLS = 10;
 const ROWS = 20;
 const BLOCK_SIZE = 30;
 
-// Dynamic Retro Audio Engine
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 const SoundEngine = {
     playTone: function(freq, type, duration, vol = 0.1) {
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (audioCtx.state === 'suspended') return;
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = type;
@@ -55,9 +151,6 @@ const SoundEngine = {
     }
 };
 
-const bgMusic = document.getElementById('bg-music');
-if (bgMusic) bgMusic.volume = 0.3; 
-
 // --- Setup Canvases ---
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
@@ -72,7 +165,6 @@ const holdCtx = holdCanvas.getContext('2d');
 holdCtx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
 const COLORS = [null, '#00FFFF', '#0000FF', '#FFA500', '#FFFF00', '#00FF00', '#800080', '#FF0000'];
-
 const SHAPES = [
     [],
     [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]], 
@@ -100,7 +192,6 @@ let animationId = null;
 let score = 0;
 let lines = 0;
 let level = 1;
-let highScore = localStorage.getItem('tetrisHighScore') || 0;
 
 let isAnimating = false;
 let linesToClear = [];
@@ -111,25 +202,17 @@ const ANIMATION_DURATION = 400;
 const scoreElement = document.getElementById('score');
 const linesElement = document.getElementById('lines');
 const levelElement = document.getElementById('level');
-const highScoreElement = document.getElementById('high-score');
 const gameOverScreen = document.getElementById('game-over-screen');
 const finalScoreElement = document.getElementById('final-score');
-const setupScreen = document.getElementById('setup-screen');
-const uiAvatar = document.getElementById('ui-avatar');
-const uiName = document.getElementById('ui-name');
 const leaderboardList = document.getElementById('leaderboard-list');
-
-// Initialize Local High Score UI
-if (highScoreElement) highScoreElement.innerText = highScore;
 
 // --- FIRESTORE LEADERBOARD LOGIC ---
 async function loadLeaderboard() {
-    if (!leaderboardList) return; // Failsafe if HTML isn't updated yet
+    if (!leaderboardList) return; 
     leaderboardList.innerHTML = '<div>Loading...</div>';
     
     try {
         const scoresRef = collection(db, "leaderboard");
-        // Query the top 5 scores, ordered descending
         const q = query(scoresRef, orderBy("score", "desc"), limit(5));
         const querySnapshot = await getDocs(q);
         
@@ -161,54 +244,7 @@ async function loadLeaderboard() {
         leaderboardList.innerHTML = '<div style="color:red; font-size:0.9rem;">Server Error.</div>';
     }
 }
-
-// Automatically load the leaderboard when the file runs
 loadLeaderboard();
-
-// --- Pre-Game Setup Logic ---
-let selectedAvatar = '🦊';
-
-// 1. The Fixed Avatar Selection
-document.querySelectorAll('.avatar-option').forEach(option => {
-    option.addEventListener('click', () => {
-        // Remove 'selected' from all options first
-        document.querySelectorAll('.avatar-option').forEach(opt => {
-            opt.classList.remove('selected');
-        });
-        // Add 'selected' to the specific one clicked
-        option.classList.add('selected');
-        // Save the avatar text
-        selectedAvatar = option.innerText;
-    });
-});
-
-// 2. The Start Game Button Logic
-const bgmSelect = document.getElementById('bgm-select');
-
-document.getElementById('start-btn').addEventListener('click', () => {
-    const playerNameInput = document.getElementById('player-name').value;
-    uiName.innerText = playerNameInput.trim() === '' ? 'GUEST' : playerNameInput;
-    uiAvatar.innerText = selectedAvatar;
-    
-    // Resume audio context for the sound effects
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    
-    // Handle the background music selection
-    if (bgmSelect) {
-        const selectedTrack = bgmSelect.value;
-        if (selectedTrack === 'none' && bgMusic) {
-            bgMusic.pause();
-            bgMusic.removeAttribute('src'); 
-        } else if (bgMusic) {
-            bgMusic.src = selectedTrack;
-            bgMusic.play().catch(e => console.log("Music file missing, playing silently."));
-        }
-    }
-    
-    // Hide the setup screen and launch the game!
-    setupScreen.classList.add('hidden'); 
-    startGame();
-});
 
 // --- Helper Functions ---
 function drawBlock(context, x, y, colorId) {
@@ -239,7 +275,6 @@ function drawGhostPiece() {
 
 function drawBoard() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
     board.forEach((row, y) => {
         row.forEach((value, x) => {
             if (value > 0) {
@@ -292,7 +327,6 @@ function drawHoldPiece() {
     });
 }
 
-// --- Game Logic ---
 function collide(board, piece) {
     const m = piece.matrix;
     for (let y = 0; y < m.length; ++y) {
@@ -344,21 +378,13 @@ async function gameOver() {
     if (bgMusic && typeof bgMusic.pause === 'function') {
         bgMusic.pause();
     }
-    
-    // Save Local High Score
-    if (score > highScore) {
-        highScore = score;
-        localStorage.setItem('tetrisHighScore', highScore);
-        if (highScoreElement) highScoreElement.innerText = highScore;
-    }
 
     finalScoreElement.innerText = score;
     gameOverScreen.classList.remove('hidden');
 
-    // --- NEW: Save to Firebase Firestore ---
-    if (score > 0) {
+    if (score > 0 && currentUser) {
         try {
-            const playerName = uiName.innerText || "GUEST";
+            const playerName = currentUser.displayName || "GUEST";
             const playerAvatar = uiAvatar.innerText || "🦊";
             
             await addDoc(collection(db, "leaderboard"), {
@@ -368,8 +394,6 @@ async function gameOver() {
                 timestamp: new Date()
             });
             console.log("Score successfully uploaded to Firebase!");
-            
-            // Refresh the UI to show the new score
             loadLeaderboard(); 
         } catch (error) {
             console.error("Error saving score to Firebase:", error);
@@ -389,7 +413,7 @@ function spawnPiece() {
     }
 }
 
-// --- Player Controls ---
+// Controls
 function playerDrop(isHardDrop = false) {
     currentPiece.y++;
     if (collide(board, currentPiece)) {
@@ -456,7 +480,6 @@ function playerHold() {
     drawHoldPiece();
 }
 
-// Keyboard Event Listeners
 document.addEventListener('keydown', event => {
     if (!isPlaying || isAnimating || !currentPiece) return;
 
@@ -475,7 +498,6 @@ document.addEventListener('keydown', event => {
     }
 });
 
-// --- Main Game Loop ---
 function update(time = 0) {
     if (!isPlaying) return;
 
@@ -545,6 +567,9 @@ function startGame() {
     update();
 }
 
+// Return to profile instead of restarting instantly
 document.getElementById('restart-btn').addEventListener('click', () => {
-    startGame();
+    gameOverScreen.classList.add('hidden');
+    gameView.classList.add('hidden');
+    profileView.classList.remove('hidden');
 });
