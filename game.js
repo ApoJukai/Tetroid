@@ -103,9 +103,12 @@ document.getElementById('play-solo-btn').addEventListener('click', () => {
     uiAvatar.innerText = selectedAvatar;
     startAudio();
     isMultiplayer = false;
-    canvas = document.getElementById('board'); // Use solo canvas
+    
+    // Safely reassign the canvas without double-scaling it
+    canvas = document.getElementById('board'); 
     ctx = canvas.getContext('2d');
-    ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
+    
+    // We remove the ctx.scale() from here because it's already scaled globally!
     
     profileView.classList.add('hidden');
     gameView.classList.remove('hidden');
@@ -690,8 +693,17 @@ function startGame() {
     
     gameOverScreen.classList.add('hidden'); 
     isPlaying = true;
+    
+    if (bgMusic && bgMusic.src && bgMusic.src !== window.location.href) {
+        bgMusic.currentTime = 0;
+        bgMusic.play().catch(e => {}); 
+    }
+    
     spawnPiece();
-    update();
+    
+    // FIX: Reset the time tracker to right NOW so pieces don't instantly drop
+    lastTime = performance.now(); 
+    requestAnimationFrame(update);
 }
 
 document.getElementById('restart-btn').addEventListener('click', () => {
