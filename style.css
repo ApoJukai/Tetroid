@@ -325,3 +325,14 @@ canvas {
     background: #1a1a2e; /* Dark background for dropdown items */
     color: white;
 }
+/* --- View Container Styling --- */
+.view-container {
+    width: 450px;
+    padding: 40px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(20, 20, 35, 0.85);
+    z-index: 200;
+}
