@@ -80,8 +80,14 @@
             </div>
 
             <!-- Main Game Board -->
-            <div class="main-board-container glass-panel">
+            <!-- We add position: relative here so the overlay stays locked to the board -->
+            <div class="main-board-container glass-panel" style="position: relative;">
                 <canvas id="board" width="300" height="600"></canvas>
+                
+                <!-- NEW: Combo & Attack Animation Overlay -->
+                <div id="combo-text-overlay" style="position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; z-index: 50; width: 100%;">
+                    <!-- Text will be injected here by JavaScript -->
+                </div>
             </div>
 
             <!-- Right Panel -->
