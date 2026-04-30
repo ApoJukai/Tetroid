@@ -690,6 +690,9 @@ function update(time = 0) {
             let totalGarbageGenerated = baseGarbage + b2bBonus + comboBonus;
             console.log(`Attack! Base: ${baseGarbage}, B2B: ${b2bBonus}, Combo: ${comboBonus}`);
 
+            // NEW: Trigger the visual animation!
+            showComboAnimation(comboCount, (b2bActive && isDifficult), linesCleared);
+
             // 4. Garbage Cancellation (Defense)
             if (totalGarbageGenerated > 0 && pendingGarbage > 0) {
                 if (totalGarbageGenerated >= pendingGarbage) {
@@ -749,6 +752,47 @@ function update(time = 0) {
     }
 
     animationId = requestAnimationFrame(update);
+}
+
+// --- COMBO ANIMATION SYSTEM ---
+function showComboAnimation(comboCount, isB2B, linesCleared) {
+    const overlay = document.getElementById('combo-text-overlay');
+    if (!overlay) return;
+    
+    // Clear any previous animations currently playing
+    overlay.innerHTML = ''; 
+    
+    // 1. Check for Back-To-Back
+    if (isB2B) {
+        const b2bEl = document.createElement('div');
+        b2bEl.className = 'b2b-anim';
+        b2bEl.innerText = 'BACK-TO-BACK';
+        overlay.appendChild(b2bEl);
+    }
+    
+    // 2. Check for Move Type (Double, Triple, Tetris)
+    let moveName = "";
+    if (linesCleared === 2) moveName = "DOUBLE";
+    if (linesCleared === 3) moveName = "TRIPLE";
+    if (linesCleared === 4) moveName = "TETRIS!";
+    
+    if (moveName) {
+        const moveEl = document.createElement('div');
+        moveEl.className = 'combo-anim';
+        if (linesCleared === 4) moveEl.classList.add('tetris-anim'); // Make Tetris green!
+        moveEl.innerText = moveName;
+        overlay.appendChild(moveEl);
+    }
+
+    // 3. Check for Combos (Only display if it's 1 Combo or higher)
+    // Note: Tetris rules state that 1 clear = 0 Combo. The 2nd clear = 1 Combo.
+    const actualCombo = comboCount - 1; 
+    if (actualCombo > 0) {
+        const comboEl = document.createElement('div');
+        comboEl.className = 'combo-anim';
+        comboEl.innerText = `${actualCombo} COMBO!`;
+        overlay.appendChild(comboEl);
+    }
 }
 
 function startGame() {
