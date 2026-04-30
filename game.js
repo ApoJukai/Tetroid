@@ -100,8 +100,14 @@ document.getElementById('play-solo-btn').addEventListener('click', () => {
     uiAvatar.innerText = selectedAvatar;
     startAudio();
     isMultiplayer = false;
+    
+    // Grab the main canvas
     canvas = document.getElementById('board'); 
     ctx = canvas.getContext('2d');
+    
+    // BULLETPROOF FIX: Forcefully reset the canvas matrix, then scale it perfectly!
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // Resets any previous scaling
+    ctx.scale(BLOCK_SIZE, BLOCK_SIZE);  // Applies the exact 30x30 pixel size
     
     profileView.classList.add('hidden');
     gameView.classList.remove('hidden');
@@ -161,15 +167,24 @@ async function findMatch() {
     opponentNameText.innerText = "WAITING...";
     isMultiplayer = true;
     
+    // Grab the Battle canvases
     canvas = battleCanvasSelf; 
     ctx = battleCtxSelf;
+
+    // BULLETPROOF FIX: Reset and scale both Battle canvases!
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
+    battleCtxOpponent.setTransform(1, 0, 0, 1, 0, 0);
+    battleCtxOpponent.scale(BLOCK_SIZE, BLOCK_SIZE);
 
     const roomsRef = collection(db, "rooms");
     const q = query(roomsRef, where("status", "==", "waiting"), limit(1));
     const snapshot = await getDocs(q);
+
     const playerName = currentUser ? currentUser.displayName : "GUEST";
 
     if (!snapshot.empty) {
+        // JOIN EXISTING ROOM
         const roomDoc = snapshot.docs[0];
         currentRoomId = roomDoc.id;
         isPlayer1 = false;
@@ -184,7 +199,9 @@ async function findMatch() {
         opponentNameText.innerText = roomDoc.data().player1.toUpperCase();
         listenToMatch();
         startGame();
+        
     } else {
+        // CREATE NEW ROOM 
         isPlayer1 = true;
         const newRoomRef = await addDoc(collection(db, "rooms"), {
             status: "waiting",
