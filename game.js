@@ -1,8 +1,7 @@
 // --- FIREBASE INTEGRATION & AUTH ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-analytics.js";
-// NEW IMPORTS: Added doc, setDoc, updateDoc, onSnapshot, deleteDoc, where
-import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, doc, setDoc, updateDoc, onSnapshot, deleteDoc, where } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, doc, setDoc, updateDoc, onSnapshot, deleteDoc, where, increment } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js";
 
 const firebaseConfig = {
@@ -25,7 +24,7 @@ const provider = new GoogleAuthProvider();
 const loginView = document.getElementById('login-view');
 const profileView = document.getElementById('profile-view');
 const gameView = document.getElementById('game-view');
-const battleView = document.getElementById('battle-view'); // NEW
+const battleView = document.getElementById('battle-view'); 
 
 const loginBtn = document.getElementById('google-login-btn');
 const logoutBtn = document.getElementById('logout-btn');
@@ -63,9 +62,7 @@ loginBtn.addEventListener('click', async () => {
     }
 });
 
-logoutBtn.addEventListener('click', () => {
-    signOut(auth);
-});
+logoutBtn.addEventListener('click', () => signOut(auth));
 
 // --- Pre-Game Profile Setup Logic ---
 let selectedAvatar = '🦊';
@@ -103,29 +100,31 @@ document.getElementById('play-solo-btn').addEventListener('click', () => {
     uiAvatar.innerText = selectedAvatar;
     startAudio();
     isMultiplayer = false;
-    
-    // Safely reassign the canvas without double-scaling it
     canvas = document.getElementById('board'); 
     ctx = canvas.getContext('2d');
-    
-    // We remove the ctx.scale() from here because it's already scaled globally!
     
     profileView.classList.add('hidden');
     gameView.classList.remove('hidden');
     startGame();
 });
 
-// --- MULTIPLAYER STATE VARIABLES ---
+// --- MULTIPLAYER & ADVANCED BATTLE STATE VARIABLES ---
 let isMultiplayer = false;
 let currentRoomId = null;
 let isPlayer1 = false;
 let unsubscribeMatch = null;
 let opponentBoardState = null;
+let pendingGarbage = 0;
+let totalGarbageReceived = 0;
+
+// NEW: Advanced Battle Tracking
+let comboCount = 0;
+let b2bActive = false;
 
 // MULTIPLAYER SETUP
 const battleCanvasSelf = document.getElementById('battle-board-self');
 const battleCtxSelf = battleCanvasSelf.getContext('2d');
-battleCtxSelf.scale(30, 30); // Hardcoded BLOCK_SIZE for battle
+battleCtxSelf.scale(30, 30); 
 
 const battleCanvasOpponent = document.getElementById('battle-board-opponent');
 const battleCtxOpponent = battleCanvasOpponent.getContext('2d');
@@ -137,7 +136,7 @@ document.getElementById('find-match-btn').addEventListener('click', async () => 
     startAudio();
     
     profileView.classList.add('hidden');
-    battleView.style.display = 'flex'; // Show battle view
+    battleView.style.display = 'flex'; 
     battleView.classList.remove('hidden');
     
     await findMatch();
@@ -145,8 +144,8 @@ document.getElementById('find-match-btn').addEventListener('click', async () => 
 
 document.getElementById('cancel-match-btn').addEventListener('click', async () => {
     if (currentRoomId && unsubscribeMatch) {
-        unsubscribeMatch(); // Stop listening
-        if (isPlayer1) await deleteDoc(doc(db, "rooms", currentRoomId)); // Clean up room if we created it
+        unsubscribeMatch(); 
+        if (isPlayer1) await deleteDoc(doc(db, "rooms", currentRoomId)); 
     }
     battleView.style.display = 'none';
     profileView.classList.remove('hidden');
@@ -162,17 +161,15 @@ async function findMatch() {
     opponentNameText.innerText = "WAITING...";
     isMultiplayer = true;
     
-    canvas = battleCanvasSelf; // Reassign main game canvas to the battle canvas
+    canvas = battleCanvasSelf; 
     ctx = battleCtxSelf;
 
     const roomsRef = collection(db, "rooms");
     const q = query(roomsRef, where("status", "==", "waiting"), limit(1));
     const snapshot = await getDocs(q);
-
     const playerName = currentUser ? currentUser.displayName : "GUEST";
 
     if (!snapshot.empty) {
-        // JOIN EXISTING ROOM
         const roomDoc = snapshot.docs[0];
         currentRoomId = roomDoc.id;
         isPlayer1 = false;
@@ -187,22 +184,21 @@ async function findMatch() {
         opponentNameText.innerText = roomDoc.data().player1.toUpperCase();
         listenToMatch();
         startGame();
-        
     } else {
-        // CREATE NEW ROOM
         isPlayer1 = true;
         const newRoomRef = await addDoc(collection(db, "rooms"), {
             status: "waiting",
             player1: playerName,
             player1Board: Array.from({length: 20}, () => Array(10).fill(0)),
-            player2Board: Array.from({length: 20}, () => Array(10).fill(0))
+            player2Board: Array.from({length: 20}, () => Array(10).fill(0)),
+            p1Garbage: 0,
+            p2Garbage: 0
         });
         currentRoomId = newRoomRef.id;
         listenToMatch();
     }
 }
 
-// The Real-Time Sync function
 function listenToMatch() {
     const statusText = document.getElementById('battle-status');
     const opponentNameText = document.getElementById('opponent-name-display');
@@ -211,22 +207,29 @@ function listenToMatch() {
         if (!docSnap.exists()) return;
         const data = docSnap.data();
 
-        // If we are player 1 and someone joins
         if (isPlayer1 && data.status === "playing" && !isPlaying) {
             statusText.innerText = "BATTLE!";
             opponentNameText.innerText = data.player2.toUpperCase();
             startGame();
         }
 
-        // Sync the opponent's board for rendering
         if (isPlayer1) {
             opponentBoardState = data.player2Board;
+            const incoming = data.p1Garbage || 0;
+            if (incoming > totalGarbageReceived) {
+                pendingGarbage += (incoming - totalGarbageReceived);
+                totalGarbageReceived = incoming;
+            }
         } else {
             opponentBoardState = data.player1Board;
+            const incoming = data.p2Garbage || 0;
+            if (incoming > totalGarbageReceived) {
+                pendingGarbage += (incoming - totalGarbageReceived);
+                totalGarbageReceived = incoming;
+            }
         }
     });
 }
-
 
 // --- Game Constants & Audio Engine ---
 const COLS = 10;
@@ -235,7 +238,6 @@ const BLOCK_SIZE = 30;
 
 let canvas = document.getElementById('board');
 let ctx = canvas.getContext('2d');
-ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 const SoundEngine = {
@@ -276,7 +278,7 @@ const holdCanvas = document.getElementById('hold-canvas');
 const holdCtx = holdCanvas.getContext('2d');
 holdCtx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
-const COLORS = [null, '#00FFFF', '#0000FF', '#FFA500', '#FFFF00', '#00FF00', '#800080', '#FF0000'];
+const COLORS = [null, '#00FFFF', '#0000FF', '#FFA500', '#FFFF00', '#00FF00', '#800080', '#FF0000', '#666666'];
 const SHAPES = [
     [],
     [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]], 
@@ -317,39 +319,41 @@ const gameOverScreen = document.getElementById('game-over-screen');
 const finalScoreElement = document.getElementById('final-score');
 const leaderboardList = document.getElementById('leaderboard-list');
 
-// --- FIRESTORE LEADERBOARD LOGIC ---
-async function loadLeaderboard() {
-    if (!leaderboardList) return; 
-    leaderboardList.innerHTML = '<div>Loading...</div>';
-    try {
-        const scoresRef = collection(db, "leaderboard");
-        const q = query(scoresRef, orderBy("score", "desc"), limit(5));
-        const querySnapshot = await getDocs(q);
-        leaderboardList.innerHTML = ''; 
-        if (querySnapshot.empty) {
-            leaderboardList.innerHTML = '<div style="font-size:0.9rem; color:#aaa;">No scores yet! Be the first!</div>';
-            return;
-        }
-        let rank = 1;
-        querySnapshot.forEach((doc) => {
-            const data = doc.data();
-            const scoreDiv = document.createElement('div');
-            scoreDiv.style.display = 'flex';
-            scoreDiv.style.justifyContent = 'space-between';
-            scoreDiv.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
-            scoreDiv.style.paddingBottom = '4px';
-            scoreDiv.innerHTML = `
-                <span><b>${rank}.</b> ${data.avatar} ${data.name}</span>
-                <span style="color:#00e5ff; font-weight:bold;">${data.score}</span>
-            `;
-            leaderboardList.appendChild(scoreDiv);
-            rank++;
-        });
-    } catch (error) {
-        leaderboardList.innerHTML = '<div style="color:red; font-size:0.9rem;">Server Error.</div>';
+// --- 7-Bag Randomizer ---
+let pieceBag = [];
+
+function generateBag() {
+    pieceBag = [1, 2, 3, 4, 5, 6, 7];
+    for (let i = pieceBag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pieceBag[i], pieceBag[j]] = [pieceBag[j], pieceBag[i]];
     }
 }
-loadLeaderboard();
+
+function createPiece() {
+    if (pieceBag.length === 0) generateBag();
+    const typeId = pieceBag.pop();
+    return { matrix: SHAPES[typeId], x: 3, y: 0 };
+}
+
+// --- Garbage Application & Hole Consistency ---
+function addGarbageLines(amount) {
+    // 5. Hole Consistency: Generates one hole position for this entire batch of garbage
+    const holeIndex = Math.floor(Math.random() * COLS);
+    
+    for (let i = 0; i < amount; i++) {
+        const topRow = board.shift(); 
+        
+        if (topRow.some(val => val !== 0)) {
+            gameOver();
+            return;
+        }
+        
+        const newRow = Array(COLS).fill(8); 
+        newRow[holeIndex] = 0; // Same hole for all lines in this combo/attack
+        board.push(newRow); 
+    }
+}
 
 // --- Helper Functions ---
 function drawBlock(context, x, y, colorId) {
@@ -377,13 +381,11 @@ function drawGhostPiece() {
     ctx.globalAlpha = 1.0; 
 }
 
-// Updated to optionally render to the opponent's screen
 function drawBoard(targetCtx, targetBoard) {
     targetCtx.clearRect(0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
     targetBoard.forEach((row, y) => {
         row.forEach((value, x) => {
             if (value > 0) {
-                // Flash animation for local player only
                 if (isAnimating && linesToClear.includes(y) && targetCtx === ctx) {
                     let progress = animationTimer / ANIMATION_DURATION;
                     let size = 1 - progress; 
@@ -397,7 +399,6 @@ function drawBoard(targetCtx, targetBoard) {
         });
     });
 
-    // Only draw ghost and active piece on YOUR board
     if (targetCtx === ctx && !isAnimating) {
         drawGhostPiece();
         if (currentPiece) {
@@ -411,7 +412,7 @@ function drawBoard(targetCtx, targetBoard) {
 }
 
 function drawNextPiece() {
-    if(isMultiplayer) return; // Next piece disabled in basic multiplayer view for space
+    if(isMultiplayer) return; 
     nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
     if (!nextPiece) return;
     const xOffset = nextPiece.matrix.length === 4 ? 0 : 0.5;
@@ -424,7 +425,7 @@ function drawNextPiece() {
 }
 
 function drawHoldPiece() {
-    if(isMultiplayer) return; // Hold piece disabled in basic multiplayer view
+    if(isMultiplayer) return; 
     holdCtx.clearRect(0, 0, holdCanvas.width, holdCanvas.height);
     if (!holdPiece) return;
     const xOffset = holdPiece.matrix.length === 4 ? 0 : 0.5;
@@ -448,7 +449,6 @@ function collide(board, piece) {
     return false;
 }
 
-// CLOUD UPLOAD ON PIECE LOCK
 async function merge(board, piece) {
     SoundEngine.lock(); 
     piece.matrix.forEach((row, y) => {
@@ -459,7 +459,6 @@ async function merge(board, piece) {
         });
     });
 
-    // Send our locked board to Firestore instantly!
     if (isMultiplayer && currentRoomId) {
         try {
             const updateData = isPlayer1 ? { player1Board: board } : { player2Board: board };
@@ -480,15 +479,11 @@ function checkLines() {
         SoundEngine.clear(); 
         isAnimating = true;
         animationTimer = 0;
-        // Sending garbage lines will be implemented here in the next step!
     } else {
+        // BREAK COMBO: If a piece locks and clears zero lines, reset the combo meter.
+        comboCount = 0;
         spawnPiece();
     }
-}
-
-function createPiece() {
-    const typeId = Math.floor(Math.random() * 7) + 1;
-    return { matrix: SHAPES[typeId], x: 3, y: 0 };
 }
 
 async function gameOver() {
@@ -499,7 +494,6 @@ async function gameOver() {
     if (isMultiplayer) {
         document.getElementById('battle-status').innerText = "YOU LOSE!";
         if (unsubscribeMatch) unsubscribeMatch();
-        // Delete room after a few seconds
         if (isPlayer1) setTimeout(() => deleteDoc(doc(db, "rooms", currentRoomId)), 3000); 
     } else {
         finalScoreElement.innerText = score;
@@ -512,13 +506,22 @@ async function gameOver() {
                 await addDoc(collection(db, "leaderboard"), {
                     name: playerName, avatar: playerAvatar, score: score, timestamp: new Date()
                 });
-                loadLeaderboard(); 
             } catch (error) { console.error("Error saving score:", error); }
         }
     }
 }
 
 function spawnPiece() {
+    if (pendingGarbage > 0) {
+        addGarbageLines(pendingGarbage);
+        pendingGarbage = 0;
+        
+        if (isMultiplayer && currentRoomId) {
+            const updateData = isPlayer1 ? { player1Board: board } : { player2Board: board };
+            updateDoc(doc(db, "rooms", currentRoomId), updateData);
+        }
+    }
+
     if (!nextPiece) nextPiece = createPiece();
     currentPiece = nextPiece;
     nextPiece = createPiece();
@@ -580,7 +583,7 @@ function playerRotate() {
 }
 
 function playerHold() {
-    if (hasHeld || isMultiplayer) return; // Disable hold in basic multiplayer
+    if (hasHeld || isMultiplayer) return; 
     SoundEngine.move(); 
 
     if (holdPiece === null) {
@@ -631,10 +634,60 @@ function update(time = 0) {
                 board.unshift(Array(COLS).fill(0));
             });
 
+            const linesCleared = linesToClear.length;
+            
+            // --- ADVANCED BATTLE LOGIC START ---
+            
+            // 2. The Combo Algorithm
+            comboCount++; // Increment combo (1st clear = combo 1, 2nd clear = combo 2)
+            
+            // 1. The Attack Table
+            let baseGarbage = 0;
+            let isDifficult = false;
+            if (linesCleared === 2) baseGarbage = 1;
+            if (linesCleared === 3) baseGarbage = 2;
+            if (linesCleared === 4) {
+                baseGarbage = 4;
+                isDifficult = true; // Tetris is considered a "difficult" move
+            }
+
+            // 3. Back-to-Back (B2B) Bonus
+            let b2bBonus = 0;
+            if (isDifficult) {
+                if (b2bActive) b2bBonus = 1; // Award +1 if previous move was also difficult
+                b2bActive = true; 
+            } else {
+                b2bActive = false; // Break the chain if we cleared 1, 2, or 3 lines
+            }
+
+            // Calculate Combo Bonus
+            let comboBonus = 0;
+            let comboCheck = comboCount - 1; 
+            if (comboCheck >= 2 && comboCheck <= 3) comboBonus = 1;
+            if (comboCheck >= 4 && comboCheck <= 5) comboBonus = 2;
+            if (comboCheck >= 6 && comboCheck <= 7) comboBonus = 3;
+            if (comboCheck >= 8) comboBonus = 4;
+
+            let totalGarbageGenerated = baseGarbage + b2bBonus + comboBonus;
+            console.log(`Attack! Base: ${baseGarbage}, B2B: ${b2bBonus}, Combo: ${comboBonus}`);
+
+            // 4. Garbage Cancellation (Defense)
+            if (totalGarbageGenerated > 0 && pendingGarbage > 0) {
+                if (totalGarbageGenerated >= pendingGarbage) {
+                    totalGarbageGenerated -= pendingGarbage;
+                    pendingGarbage = 0;
+                } else {
+                    pendingGarbage -= totalGarbageGenerated;
+                    totalGarbageGenerated = 0;
+                }
+            }
+
+            // --- ADVANCED BATTLE LOGIC END ---
+
             if(!isMultiplayer) {
                 const rowScores = [0, 100, 300, 500, 800];
-                score += rowScores[linesToClear.length] * level;
-                lines += linesToClear.length;
+                score += rowScores[linesCleared] * level;
+                lines += linesCleared;
                 level = Math.floor(lines / 10) + 1;
                 dropInterval = Math.max(100, 1000 - (level - 1) * 100); 
 
@@ -643,9 +696,15 @@ function update(time = 0) {
                 levelElement.innerText = level;
             }
 
-            // Sync after clearing lines
+            // Send remaining attack to the opponent
             if (isMultiplayer && currentRoomId) {
                 const updateData = isPlayer1 ? { player1Board: board } : { player2Board: board };
+                
+                if (totalGarbageGenerated > 0) {
+                    const targetField = isPlayer1 ? "p2Garbage" : "p1Garbage";
+                    updateData[targetField] = increment(totalGarbageGenerated);
+                }
+                
                 updateDoc(doc(db, "rooms", currentRoomId), updateData);
             }
 
@@ -665,7 +724,6 @@ function update(time = 0) {
         playerDrop();
     }
 
-    // MULTIPLAYER DUAL-RENDER
     drawBoard(ctx, board);
     if (isMultiplayer && opponentBoardState) {
         drawBoard(battleCtxOpponent, opponentBoardState);
@@ -681,7 +739,14 @@ function startGame() {
     level = 1;
     dropInterval = 1000;
     isAnimating = false;
+    
+    // Reset Battle States
     opponentBoardState = null;
+    pendingGarbage = 0;
+    totalGarbageReceived = 0;
+    comboCount = 0;
+    b2bActive = false;
+    pieceBag = []; 
     
     if(!isMultiplayer) {
         scoreElement.innerText = score;
@@ -693,16 +758,13 @@ function startGame() {
     
     gameOverScreen.classList.add('hidden'); 
     isPlaying = true;
-    
     if (bgMusic && bgMusic.src && bgMusic.src !== window.location.href) {
         bgMusic.currentTime = 0;
         bgMusic.play().catch(e => {}); 
     }
     
     spawnPiece();
-    
-    // FIX: Reset the time tracker to right NOW so pieces don't instantly drop
-    lastTime = performance.now(); 
+    lastTime = performance.now();
     requestAnimationFrame(update);
 }
 
