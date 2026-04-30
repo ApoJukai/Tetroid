@@ -108,7 +108,30 @@
                 </div>
             </div>
         </div> 
+        <!-- ========================================== -->
+        <!-- VIEW 4: BATTLE ARENA                       -->
+        <!-- ========================================== -->
+        <div id="battle-view" class="game-wrapper glass-panel hidden" style="display: none; flex-direction: row; gap: 40px; justify-content: center; width: 800px;">
+            
+            <!-- Player 1 (You) -->
+            <div class="side-panel" style="align-items: center; width: auto;">
+                <h2 style="color: #00e5ff; text-shadow: 0 0 10px rgba(0, 229, 255, 0.5);">YOU</h2>
+                <canvas id="battle-board-self" width="300" height="600" style="background-color: rgba(0, 0, 0, 0.6); border: 2px solid #00e5ff; border-radius: 8px; box-shadow: 0 0 15px rgba(0, 229, 255, 0.3);"></canvas>
+            </div>
 
+            <!-- Match Status Center -->
+            <div class="side-panel" style="justify-content: center; width: 150px; text-align: center;">
+                <h2 id="battle-status" style="color: #ff007f; font-size: 1.5rem; text-shadow: 0 0 10px rgba(255, 0, 127, 0.5);">SEARCHING...</h2>
+                <button id="cancel-match-btn" class="glass-btn" style="border-color: #ff007f; margin-top: 30px;">CANCEL</button>
+            </div>
+
+            <!-- Player 2 (Opponent) -->
+            <div class="side-panel" style="align-items: center; width: auto;">
+                <h2 id="opponent-name-display" style="color: #ff003c; text-shadow: 0 0 10px rgba(255, 0, 60, 0.5);">OPPONENT</h2>
+                <canvas id="battle-board-opponent" width="300" height="600" style="background-color: rgba(0, 0, 0, 0.4); border: 2px solid #ff003c; border-radius: 8px; box-shadow: 0 0 15px rgba(255, 0, 60, 0.2);"></canvas>
+            </div>
+
+        </div>
         <!-- Game Over Screen -->
         <div id="game-over-screen" class="glass-panel hidden">
             <h1>GAME OVER</h1>
