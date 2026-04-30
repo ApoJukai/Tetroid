@@ -1,7 +1,8 @@
 // --- FIREBASE INTEGRATION & AUTH ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
 import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-analytics.js";
-import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+// NEW IMPORTS: Added doc, setDoc, updateDoc, onSnapshot, deleteDoc, where
+import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, doc, setDoc, updateDoc, onSnapshot, deleteDoc, where } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js";
 
 const firebaseConfig = {
@@ -14,7 +15,6 @@ const firebaseConfig = {
     measurementId: "G-Z2PSNG84N1"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 const db = getFirestore(app);
@@ -25,6 +25,7 @@ const provider = new GoogleAuthProvider();
 const loginView = document.getElementById('login-view');
 const profileView = document.getElementById('profile-view');
 const gameView = document.getElementById('game-view');
+const battleView = document.getElementById('battle-view'); // NEW
 
 const loginBtn = document.getElementById('google-login-btn');
 const logoutBtn = document.getElementById('logout-btn');
@@ -34,7 +35,6 @@ const dashboardName = document.getElementById('dashboard-name');
 let currentUser = null;
 
 // --- AUTHENTICATION LOGIC ---
-// Listen for user login/logout state changes
 onAuthStateChanged(auth, (user) => {
     if (user) {
         currentUser = user;
@@ -45,17 +45,16 @@ onAuthStateChanged(auth, (user) => {
         currentUser = null;
         profileView.classList.add('hidden');
         gameView.classList.add('hidden');
+        battleView.style.display = 'none';
         loginView.classList.remove('hidden');
     }
 });
 
-// Login Button Click
 loginBtn.addEventListener('click', async () => {
     try {
         authError.style.display = 'none';
         loginBtn.innerText = "CONNECTING...";
         await signInWithPopup(auth, provider);
-        // onAuthStateChanged will handle the UI switch
     } catch (error) {
         console.error("Auth Error:", error);
         authError.innerText = "Login failed. Please try again.";
@@ -64,7 +63,6 @@ loginBtn.addEventListener('click', async () => {
     }
 });
 
-// Logout Button Click
 logoutBtn.addEventListener('click', () => {
     signOut(auth);
 });
@@ -85,13 +83,7 @@ const uiName = document.getElementById('ui-name');
 const bgMusic = document.getElementById('bg-music');
 if (bgMusic) bgMusic.volume = 0.3; 
 
-// Play Solo Click
-document.getElementById('play-solo-btn').addEventListener('click', () => {
-    // Populate Game UI with user data
-    uiName.innerText = currentUser ? (currentUser.displayName || "GUEST") : "GUEST";
-    uiAvatar.innerText = selectedAvatar;
-    
-    // Audio Context & Music Setup
+function startAudio() {
     if (audioCtx.state === 'suspended') audioCtx.resume();
     if (bgmSelect) {
         const selectedTrack = bgmSelect.value;
@@ -103,22 +95,144 @@ document.getElementById('play-solo-btn').addEventListener('click', () => {
             bgMusic.play().catch(e => console.log("Music file missing."));
         }
     }
+}
+
+// SOLO MODE
+document.getElementById('play-solo-btn').addEventListener('click', () => {
+    uiName.innerText = currentUser ? (currentUser.displayName || "GUEST") : "GUEST";
+    uiAvatar.innerText = selectedAvatar;
+    startAudio();
+    isMultiplayer = false;
+    canvas = document.getElementById('board'); // Use solo canvas
+    ctx = canvas.getContext('2d');
+    ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
     
-    // Switch views and start game
     profileView.classList.add('hidden');
     gameView.classList.remove('hidden');
     startGame();
 });
 
-// Battle Online Stub
-document.getElementById('find-match-btn').addEventListener('click', () => {
-    alert("Matchmaking and Battle Arena are coming in Part 2! Enjoy Solo mode for now.");
+// --- MULTIPLAYER STATE VARIABLES ---
+let isMultiplayer = false;
+let currentRoomId = null;
+let isPlayer1 = false;
+let unsubscribeMatch = null;
+let opponentBoardState = null;
+
+// MULTIPLAYER SETUP
+const battleCanvasSelf = document.getElementById('battle-board-self');
+const battleCtxSelf = battleCanvasSelf.getContext('2d');
+battleCtxSelf.scale(30, 30); // Hardcoded BLOCK_SIZE for battle
+
+const battleCanvasOpponent = document.getElementById('battle-board-opponent');
+const battleCtxOpponent = battleCanvasOpponent.getContext('2d');
+battleCtxOpponent.scale(30, 30);
+
+document.getElementById('find-match-btn').addEventListener('click', async () => {
+    uiName.innerText = currentUser ? (currentUser.displayName || "GUEST") : "GUEST";
+    uiAvatar.innerText = selectedAvatar;
+    startAudio();
+    
+    profileView.classList.add('hidden');
+    battleView.style.display = 'flex'; // Show battle view
+    battleView.classList.remove('hidden');
+    
+    await findMatch();
 });
+
+document.getElementById('cancel-match-btn').addEventListener('click', async () => {
+    if (currentRoomId && unsubscribeMatch) {
+        unsubscribeMatch(); // Stop listening
+        if (isPlayer1) await deleteDoc(doc(db, "rooms", currentRoomId)); // Clean up room if we created it
+    }
+    battleView.style.display = 'none';
+    profileView.classList.remove('hidden');
+    currentRoomId = null;
+    isMultiplayer = false;
+});
+
+// --- MATCHMAKING LOGIC ---
+async function findMatch() {
+    const statusText = document.getElementById('battle-status');
+    const opponentNameText = document.getElementById('opponent-name-display');
+    statusText.innerText = "SEARCHING...";
+    opponentNameText.innerText = "WAITING...";
+    isMultiplayer = true;
+    
+    canvas = battleCanvasSelf; // Reassign main game canvas to the battle canvas
+    ctx = battleCtxSelf;
+
+    const roomsRef = collection(db, "rooms");
+    const q = query(roomsRef, where("status", "==", "waiting"), limit(1));
+    const snapshot = await getDocs(q);
+
+    const playerName = currentUser ? currentUser.displayName : "GUEST";
+
+    if (!snapshot.empty) {
+        // JOIN EXISTING ROOM
+        const roomDoc = snapshot.docs[0];
+        currentRoomId = roomDoc.id;
+        isPlayer1 = false;
+        
+        await updateDoc(doc(db, "rooms", currentRoomId), {
+            status: "playing",
+            player2: playerName,
+            player2Board: Array.from({length: 20}, () => Array(10).fill(0))
+        });
+        
+        statusText.innerText = "BATTLE!";
+        opponentNameText.innerText = roomDoc.data().player1.toUpperCase();
+        listenToMatch();
+        startGame();
+        
+    } else {
+        // CREATE NEW ROOM
+        isPlayer1 = true;
+        const newRoomRef = await addDoc(collection(db, "rooms"), {
+            status: "waiting",
+            player1: playerName,
+            player1Board: Array.from({length: 20}, () => Array(10).fill(0)),
+            player2Board: Array.from({length: 20}, () => Array(10).fill(0))
+        });
+        currentRoomId = newRoomRef.id;
+        listenToMatch();
+    }
+}
+
+// The Real-Time Sync function
+function listenToMatch() {
+    const statusText = document.getElementById('battle-status');
+    const opponentNameText = document.getElementById('opponent-name-display');
+
+    unsubscribeMatch = onSnapshot(doc(db, "rooms", currentRoomId), (docSnap) => {
+        if (!docSnap.exists()) return;
+        const data = docSnap.data();
+
+        // If we are player 1 and someone joins
+        if (isPlayer1 && data.status === "playing" && !isPlaying) {
+            statusText.innerText = "BATTLE!";
+            opponentNameText.innerText = data.player2.toUpperCase();
+            startGame();
+        }
+
+        // Sync the opponent's board for rendering
+        if (isPlayer1) {
+            opponentBoardState = data.player2Board;
+        } else {
+            opponentBoardState = data.player1Board;
+        }
+    });
+}
+
 
 // --- Game Constants & Audio Engine ---
 const COLS = 10;
 const ROWS = 20;
 const BLOCK_SIZE = 30;
+
+let canvas = document.getElementById('board');
+let ctx = canvas.getContext('2d');
+ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 const SoundEngine = {
@@ -150,11 +264,6 @@ const SoundEngine = {
         setTimeout(() => SoundEngine.playTone(200, 'sawtooth', 0.6, 0.1), 500);
     }
 };
-
-// --- Setup Canvases ---
-const canvas = document.getElementById('board');
-const ctx = canvas.getContext('2d');
-ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
 const nextCanvas = document.getElementById('next-canvas');
 const nextCtx = nextCanvas.getContext('2d');
@@ -198,7 +307,6 @@ let linesToClear = [];
 let animationTimer = 0;
 const ANIMATION_DURATION = 400; 
 
-// --- DOM Elements ---
 const scoreElement = document.getElementById('score');
 const linesElement = document.getElementById('lines');
 const levelElement = document.getElementById('level');
@@ -210,19 +318,15 @@ const leaderboardList = document.getElementById('leaderboard-list');
 async function loadLeaderboard() {
     if (!leaderboardList) return; 
     leaderboardList.innerHTML = '<div>Loading...</div>';
-    
     try {
         const scoresRef = collection(db, "leaderboard");
         const q = query(scoresRef, orderBy("score", "desc"), limit(5));
         const querySnapshot = await getDocs(q);
-        
         leaderboardList.innerHTML = ''; 
-        
         if (querySnapshot.empty) {
             leaderboardList.innerHTML = '<div style="font-size:0.9rem; color:#aaa;">No scores yet! Be the first!</div>';
             return;
         }
-
         let rank = 1;
         querySnapshot.forEach((doc) => {
             const data = doc.data();
@@ -231,7 +335,6 @@ async function loadLeaderboard() {
             scoreDiv.style.justifyContent = 'space-between';
             scoreDiv.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
             scoreDiv.style.paddingBottom = '4px';
-            
             scoreDiv.innerHTML = `
                 <span><b>${rank}.</b> ${data.avatar} ${data.name}</span>
                 <span style="color:#00e5ff; font-weight:bold;">${data.score}</span>
@@ -240,7 +343,6 @@ async function loadLeaderboard() {
             rank++;
         });
     } catch (error) {
-        console.error("Error loading leaderboard:", error);
         leaderboardList.innerHTML = '<div style="color:red; font-size:0.9rem;">Server Error.</div>';
     }
 }
@@ -263,7 +365,6 @@ function drawGhostPiece() {
     const ghost = { matrix: currentPiece.matrix, x: currentPiece.x, y: currentPiece.y };
     while (!collide(board, ghost)) { ghost.y++; }
     ghost.y--; 
-    
     ctx.globalAlpha = 0.2;
     ghost.matrix.forEach((row, y) => {
         row.forEach((value, x) => {
@@ -273,30 +374,33 @@ function drawGhostPiece() {
     ctx.globalAlpha = 1.0; 
 }
 
-function drawBoard() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    board.forEach((row, y) => {
+// Updated to optionally render to the opponent's screen
+function drawBoard(targetCtx, targetBoard) {
+    targetCtx.clearRect(0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
+    targetBoard.forEach((row, y) => {
         row.forEach((value, x) => {
             if (value > 0) {
-                if (isAnimating && linesToClear.includes(y)) {
+                // Flash animation for local player only
+                if (isAnimating && linesToClear.includes(y) && targetCtx === ctx) {
                     let progress = animationTimer / ANIMATION_DURATION;
                     let size = 1 - progress; 
                     let offset = progress / 2; 
-                    ctx.fillStyle = 'white'; 
-                    ctx.fillRect(x + offset, y + offset, size, size);
+                    targetCtx.fillStyle = 'white'; 
+                    targetCtx.fillRect(x + offset, y + offset, size, size);
                 } else {
-                    drawBlock(ctx, x, y, value);
+                    drawBlock(targetCtx, x, y, value);
                 }
             }
         });
     });
 
-    if (!isAnimating) {
+    // Only draw ghost and active piece on YOUR board
+    if (targetCtx === ctx && !isAnimating) {
         drawGhostPiece();
         if (currentPiece) {
             currentPiece.matrix.forEach((row, y) => {
                 row.forEach((value, x) => {
-                    if (value > 0) drawBlock(ctx, currentPiece.x + x, currentPiece.y + y, value);
+                    if (value > 0) drawBlock(targetCtx, currentPiece.x + x, currentPiece.y + y, value);
                 });
             });
         }
@@ -304,6 +408,7 @@ function drawBoard() {
 }
 
 function drawNextPiece() {
+    if(isMultiplayer) return; // Next piece disabled in basic multiplayer view for space
     nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
     if (!nextPiece) return;
     const xOffset = nextPiece.matrix.length === 4 ? 0 : 0.5;
@@ -316,6 +421,7 @@ function drawNextPiece() {
 }
 
 function drawHoldPiece() {
+    if(isMultiplayer) return; // Hold piece disabled in basic multiplayer view
     holdCtx.clearRect(0, 0, holdCanvas.width, holdCanvas.height);
     if (!holdPiece) return;
     const xOffset = holdPiece.matrix.length === 4 ? 0 : 0.5;
@@ -339,7 +445,8 @@ function collide(board, piece) {
     return false;
 }
 
-function merge(board, piece) {
+// CLOUD UPLOAD ON PIECE LOCK
+async function merge(board, piece) {
     SoundEngine.lock(); 
     piece.matrix.forEach((row, y) => {
         row.forEach((value, x) => {
@@ -348,6 +455,14 @@ function merge(board, piece) {
             }
         });
     });
+
+    // Send our locked board to Firestore instantly!
+    if (isMultiplayer && currentRoomId) {
+        try {
+            const updateData = isPlayer1 ? { player1Board: board } : { player2Board: board };
+            await updateDoc(doc(db, "rooms", currentRoomId), updateData);
+        } catch (e) { console.error("Sync error", e); }
+    }
 }
 
 function checkLines() {
@@ -362,6 +477,7 @@ function checkLines() {
         SoundEngine.clear(); 
         isAnimating = true;
         animationTimer = 0;
+        // Sending garbage lines will be implemented here in the next step!
     } else {
         spawnPiece();
     }
@@ -375,28 +491,26 @@ function createPiece() {
 async function gameOver() {
     isPlaying = false;
     SoundEngine.gameover();
-    if (bgMusic && typeof bgMusic.pause === 'function') {
-        bgMusic.pause();
-    }
+    if (bgMusic && typeof bgMusic.pause === 'function') bgMusic.pause();
 
-    finalScoreElement.innerText = score;
-    gameOverScreen.classList.remove('hidden');
+    if (isMultiplayer) {
+        document.getElementById('battle-status').innerText = "YOU LOSE!";
+        if (unsubscribeMatch) unsubscribeMatch();
+        // Delete room after a few seconds
+        if (isPlayer1) setTimeout(() => deleteDoc(doc(db, "rooms", currentRoomId)), 3000); 
+    } else {
+        finalScoreElement.innerText = score;
+        gameOverScreen.classList.remove('hidden');
 
-    if (score > 0 && currentUser) {
-        try {
-            const playerName = currentUser.displayName || "GUEST";
-            const playerAvatar = uiAvatar.innerText || "🦊";
-            
-            await addDoc(collection(db, "leaderboard"), {
-                name: playerName,
-                avatar: playerAvatar,
-                score: score,
-                timestamp: new Date()
-            });
-            console.log("Score successfully uploaded to Firebase!");
-            loadLeaderboard(); 
-        } catch (error) {
-            console.error("Error saving score to Firebase:", error);
+        if (score > 0 && currentUser) {
+            try {
+                const playerName = currentUser.displayName || "GUEST";
+                const playerAvatar = uiAvatar.innerText || "🦊";
+                await addDoc(collection(db, "leaderboard"), {
+                    name: playerName, avatar: playerAvatar, score: score, timestamp: new Date()
+                });
+                loadLeaderboard(); 
+            } catch (error) { console.error("Error saving score:", error); }
         }
     }
 }
@@ -463,7 +577,7 @@ function playerRotate() {
 }
 
 function playerHold() {
-    if (hasHeld) return; 
+    if (hasHeld || isMultiplayer) return; // Disable hold in basic multiplayer
     SoundEngine.move(); 
 
     if (holdPiece === null) {
@@ -514,20 +628,31 @@ function update(time = 0) {
                 board.unshift(Array(COLS).fill(0));
             });
 
-            const rowScores = [0, 100, 300, 500, 800];
-            score += rowScores[linesToClear.length] * level;
-            lines += linesToClear.length;
-            level = Math.floor(lines / 10) + 1;
-            dropInterval = Math.max(100, 1000 - (level - 1) * 100); 
+            if(!isMultiplayer) {
+                const rowScores = [0, 100, 300, 500, 800];
+                score += rowScores[linesToClear.length] * level;
+                lines += linesToClear.length;
+                level = Math.floor(lines / 10) + 1;
+                dropInterval = Math.max(100, 1000 - (level - 1) * 100); 
 
-            scoreElement.innerText = score;
-            linesElement.innerText = lines;
-            levelElement.innerText = level;
+                scoreElement.innerText = score;
+                linesElement.innerText = lines;
+                levelElement.innerText = level;
+            }
+
+            // Sync after clearing lines
+            if (isMultiplayer && currentRoomId) {
+                const updateData = isPlayer1 ? { player1Board: board } : { player2Board: board };
+                updateDoc(doc(db, "rooms", currentRoomId), updateData);
+            }
 
             spawnPiece(); 
         }
         
-        drawBoard();
+        drawBoard(ctx, board);
+        if (isMultiplayer && opponentBoardState) {
+            drawBoard(battleCtxOpponent, opponentBoardState);
+        }
         animationId = requestAnimationFrame(update);
         return; 
     }
@@ -537,7 +662,12 @@ function update(time = 0) {
         playerDrop();
     }
 
-    drawBoard();
+    // MULTIPLAYER DUAL-RENDER
+    drawBoard(ctx, board);
+    if (isMultiplayer && opponentBoardState) {
+        drawBoard(battleCtxOpponent, opponentBoardState);
+    }
+
     animationId = requestAnimationFrame(update);
 }
 
@@ -548,28 +678,25 @@ function startGame() {
     level = 1;
     dropInterval = 1000;
     isAnimating = false;
+    opponentBoardState = null;
     
-    scoreElement.innerText = score;
-    linesElement.innerText = lines;
-    levelElement.innerText = level;
-    
-    holdPiece = null;
-    drawHoldPiece();
+    if(!isMultiplayer) {
+        scoreElement.innerText = score;
+        linesElement.innerText = lines;
+        levelElement.innerText = level;
+        holdPiece = null;
+        drawHoldPiece();
+    }
     
     gameOverScreen.classList.add('hidden'); 
-    
     isPlaying = true;
-    if (bgMusic && bgMusic.src && bgMusic.src !== window.location.href) {
-        bgMusic.currentTime = 0;
-        bgMusic.play().catch(e => {}); 
-    }
     spawnPiece();
     update();
 }
 
-// Return to profile instead of restarting instantly
 document.getElementById('restart-btn').addEventListener('click', () => {
     gameOverScreen.classList.add('hidden');
     gameView.classList.add('hidden');
+    battleView.style.display = 'none';
     profileView.classList.remove('hidden');
 });
