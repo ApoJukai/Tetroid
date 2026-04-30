@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Tetris Arcade</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-background">
+        <div class="game-wrapper glass-panel">
+            
+            <!-- Left Panel: Profile, Hold & Score -->
+            <div class="side-panel">
+                <div class="panel-box glass-panel">
+                    <div class="player-profile">
+                        <div id="ui-avatar" class="profile-avatar">🦊</div>
+                        <div id="ui-name" class="profile-name">PLAYER</div>
+                    </div>
+                </div>
+                <div class="panel-box glass-panel">
+                    <h2>HOLD</h2>
+                    <canvas id="hold-canvas" width="120" height="120"></canvas>
+                </div>
+                <div class="panel-box glass-panel">
+                    <h2>SCORE</h2>
+                    <p id="score">0</p>
+                    <h2>LINES</h2>
+                    <p id="lines">0</p>
+                    <h2>LEVEL</h2>
+                    <p id="level">1</p>
+                </div>
+            </div>
+
+            <!-- Main Game Board -->
+            <div class="main-board-container glass-panel">
+                <canvas id="board" width="300" height="600"></canvas>
+            </div>
+
+            <!-- Right Panel: Next, Global Leaderboard & Controls -->
+            <div class="side-panel">
+                <div class="panel-box glass-panel">
+                    <h2>NEXT</h2>
+                    <canvas id="next-canvas" width="120" height="120"></canvas>
+                </div>
+                
+                <!-- UPDATED: Global Leaderboard Panel -->
+                <div class="panel-box glass-panel" style="border-color: #ff007f; box-shadow: 0 0 10px rgba(255, 0, 127, 0.2);">
+                    <h2 style="color: #ff007f; text-shadow: 0 0 10px rgba(255, 0, 127, 0.5);">GLOBAL TOP 5</h2>
+                    <!-- This empty div is where Firebase will inject the scores -->
+                    <div id="leaderboard-list" style="font-size: 1.1rem; text-align: left; margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                        <div>Loading...</div>
+                    </div>
+                </div>
+
+                <div class="panel-box glass-panel controls-text">
+                    <h2>CONTROLS</h2>
+                    <p><b>⬅ / ➡</b> Move</p>
+                    <p><b>⬆</b> Rotate</p>
+                    <p><b>⬇</b> Soft Drop</p>
+                    <p><b>Space</b> Hard Drop</p>
+                    <p><b>C</b> Hold</p>
+                </div>
+            </div>
+
+        </div> <!-- End of game-wrapper -->
+
+        <!-- Player Setup Screen -->
+        <div id="setup-screen" class="glass-panel">
+            <h1>WELCOME</h1>
+            <input type="text" id="player-name" placeholder="Enter your name..." maxlength="12">
+            
+            <h2>CHOOSE AVATAR</h2>
+            <div class="avatar-selection">
+                <div class="avatar-option selected">🦊</div>
+                <div class="avatar-option">🐱</div>
+                <div class="avatar-option">🐼</div>
+                <div class="avatar-option">🐸</div>
+            </div>
+
+            <h2>MUSIC THEME</h2>
+            <select id="bgm-select" class="glass-input">
+                <option value="none">No Music (Muted)</option>
+                <option value="flymagpie.mp3">Theme A: Retro Arcade</option>
+                <option value="track2.mp3">Theme B: Cyberpunk Drive</option>
+                <option value="track3.mp3">Theme C: Chill Wave</option>
+            </select>
+
+            <button id="start-btn" class="glass-btn">START GAME</button>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="glass-panel hidden">
+            <h1>GAME OVER</h1>
+            <h2>FINAL SCORE</h2>
+            <p id="final-score" style="font-size: 2.5rem; color: #00e5ff; font-weight: bold; text-shadow: 0 0 10px rgba(0, 229, 255, 0.5);">0</p>
+            <button id="restart-btn" class="glass-btn">TRY AGAIN</button>
+        </div>
+
+        <!-- Background Music Audio Tag -->
+        <audio id="bg-music" loop preload="auto"></audio>
+    </div>
+    
+    <!-- CRITICAL UPDATE: type="module" is required for Firebase imports to work -->
+    <script type="module" src="game.js"></script>
+</body>
+</html>

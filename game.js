@@ -1,0 +1,550 @@
+// --- FIREBASE INTEGRATION ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-analytics.js";
+import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyChwSowRGkPaPyUvj6vjrpiHUSTjDCdsVU",
+    authDomain: "tetroid-8ddc4.firebaseapp.com",
+    projectId: "tetroid-8ddc4",
+    storageBucket: "tetroid-8ddc4.firebasestorage.app",
+    messagingSenderId: "892394499098",
+    appId: "1:892394499098:web:7eea9487c5b4aa0924b5a3",
+    measurementId: "G-Z2PSNG84N1"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+const db = getFirestore(app);
+
+// --- Game Constants & Audio Engine ---
+const COLS = 10;
+const ROWS = 20;
+const BLOCK_SIZE = 30;
+
+// Dynamic Retro Audio Engine
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const SoundEngine = {
+    playTone: function(freq, type, duration, vol = 0.1) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    },
+    move: () => SoundEngine.playTone(300, 'sine', 0.1, 0.05),
+    rotate: () => SoundEngine.playTone(400, 'triangle', 0.1, 0.05),
+    drop: () => SoundEngine.playTone(150, 'square', 0.15, 0.1),
+    lock: () => SoundEngine.playTone(200, 'square', 0.1, 0.05),
+    clear: () => {
+        setTimeout(() => SoundEngine.playTone(400, 'sine', 0.1, 0.1), 0);
+        setTimeout(() => SoundEngine.playTone(600, 'sine', 0.1, 0.1), 100);
+        setTimeout(() => SoundEngine.playTone(800, 'sine', 0.2, 0.1), 200);
+    },
+    gameover: () => {
+        setTimeout(() => SoundEngine.playTone(300, 'sawtooth', 0.3, 0.1), 0);
+        setTimeout(() => SoundEngine.playTone(250, 'sawtooth', 0.3, 0.1), 250);
+        setTimeout(() => SoundEngine.playTone(200, 'sawtooth', 0.6, 0.1), 500);
+    }
+};
+
+const bgMusic = document.getElementById('bg-music');
+if (bgMusic) bgMusic.volume = 0.3; 
+
+// --- Setup Canvases ---
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
+
+const nextCanvas = document.getElementById('next-canvas');
+const nextCtx = nextCanvas.getContext('2d');
+nextCtx.scale(BLOCK_SIZE, BLOCK_SIZE); 
+
+const holdCanvas = document.getElementById('hold-canvas');
+const holdCtx = holdCanvas.getContext('2d');
+holdCtx.scale(BLOCK_SIZE, BLOCK_SIZE);
+
+const COLORS = [null, '#00FFFF', '#0000FF', '#FFA500', '#FFFF00', '#00FF00', '#800080', '#FF0000'];
+
+const SHAPES = [
+    [],
+    [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]], 
+    [[2,0,0], [2,2,2], [0,0,0]], 
+    [[0,0,3], [3,3,3], [0,0,0]], 
+    [[4,4], [4,4]], 
+    [[0,5,5], [5,5,0], [0,0,0]], 
+    [[0,6,0], [6,6,6], [0,0,0]], 
+    [[7,7,0], [0,7,7], [0,0,0]]  
+];
+
+// --- Game State Variables ---
+let board = Array.from({length: ROWS}, () => Array(COLS).fill(0));
+let currentPiece = null;
+let nextPiece = null;
+let holdPiece = null;
+let hasHeld = false; 
+
+let dropCounter = 0;
+let dropInterval = 1000;
+let lastTime = 0;
+let isPlaying = false;
+let animationId = null;
+
+let score = 0;
+let lines = 0;
+let level = 1;
+let highScore = localStorage.getItem('tetrisHighScore') || 0;
+
+let isAnimating = false;
+let linesToClear = [];
+let animationTimer = 0;
+const ANIMATION_DURATION = 400; 
+
+// --- DOM Elements ---
+const scoreElement = document.getElementById('score');
+const linesElement = document.getElementById('lines');
+const levelElement = document.getElementById('level');
+const highScoreElement = document.getElementById('high-score');
+const gameOverScreen = document.getElementById('game-over-screen');
+const finalScoreElement = document.getElementById('final-score');
+const setupScreen = document.getElementById('setup-screen');
+const uiAvatar = document.getElementById('ui-avatar');
+const uiName = document.getElementById('ui-name');
+const leaderboardList = document.getElementById('leaderboard-list');
+
+// Initialize Local High Score UI
+if (highScoreElement) highScoreElement.innerText = highScore;
+
+// --- FIRESTORE LEADERBOARD LOGIC ---
+async function loadLeaderboard() {
+    if (!leaderboardList) return; // Failsafe if HTML isn't updated yet
+    leaderboardList.innerHTML = '<div>Loading...</div>';
+    
+    try {
+        const scoresRef = collection(db, "leaderboard");
+        // Query the top 5 scores, ordered descending
+        const q = query(scoresRef, orderBy("score", "desc"), limit(5));
+        const querySnapshot = await getDocs(q);
+        
+        leaderboardList.innerHTML = ''; 
+        
+        if (querySnapshot.empty) {
+            leaderboardList.innerHTML = '<div style="font-size:0.9rem; color:#aaa;">No scores yet! Be the first!</div>';
+            return;
+        }
+
+        let rank = 1;
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            const scoreDiv = document.createElement('div');
+            scoreDiv.style.display = 'flex';
+            scoreDiv.style.justifyContent = 'space-between';
+            scoreDiv.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
+            scoreDiv.style.paddingBottom = '4px';
+            
+            scoreDiv.innerHTML = `
+                <span><b>${rank}.</b> ${data.avatar} ${data.name}</span>
+                <span style="color:#00e5ff; font-weight:bold;">${data.score}</span>
+            `;
+            leaderboardList.appendChild(scoreDiv);
+            rank++;
+        });
+    } catch (error) {
+        console.error("Error loading leaderboard:", error);
+        leaderboardList.innerHTML = '<div style="color:red; font-size:0.9rem;">Server Error.</div>';
+    }
+}
+
+// Automatically load the leaderboard when the file runs
+loadLeaderboard();
+
+// --- Pre-Game Setup Logic ---
+let selectedAvatar = '🦊';
+
+// 1. The Fixed Avatar Selection
+document.querySelectorAll('.avatar-option').forEach(option => {
+    option.addEventListener('click', () => {
+        // Remove 'selected' from all options first
+        document.querySelectorAll('.avatar-option').forEach(opt => {
+            opt.classList.remove('selected');
+        });
+        // Add 'selected' to the specific one clicked
+        option.classList.add('selected');
+        // Save the avatar text
+        selectedAvatar = option.innerText;
+    });
+});
+
+// 2. The Start Game Button Logic
+const bgmSelect = document.getElementById('bgm-select');
+
+document.getElementById('start-btn').addEventListener('click', () => {
+    const playerNameInput = document.getElementById('player-name').value;
+    uiName.innerText = playerNameInput.trim() === '' ? 'GUEST' : playerNameInput;
+    uiAvatar.innerText = selectedAvatar;
+    
+    // Resume audio context for the sound effects
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    // Handle the background music selection
+    if (bgmSelect) {
+        const selectedTrack = bgmSelect.value;
+        if (selectedTrack === 'none' && bgMusic) {
+            bgMusic.pause();
+            bgMusic.removeAttribute('src'); 
+        } else if (bgMusic) {
+            bgMusic.src = selectedTrack;
+            bgMusic.play().catch(e => console.log("Music file missing, playing silently."));
+        }
+    }
+    
+    // Hide the setup screen and launch the game!
+    setupScreen.classList.add('hidden'); 
+    startGame();
+});
+
+// --- Helper Functions ---
+function drawBlock(context, x, y, colorId) {
+    context.fillStyle = COLORS[colorId];
+    context.fillRect(x, y, 1, 1);
+    context.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    context.fillRect(x, y, 1, 0.1); 
+    context.fillRect(x, y, 0.1, 1); 
+    context.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    context.fillRect(x, y + 0.9, 1, 0.1); 
+    context.fillRect(x + 0.9, y, 0.1, 1); 
+}
+
+function drawGhostPiece() {
+    if (!currentPiece) return;
+    const ghost = { matrix: currentPiece.matrix, x: currentPiece.x, y: currentPiece.y };
+    while (!collide(board, ghost)) { ghost.y++; }
+    ghost.y--; 
+    
+    ctx.globalAlpha = 0.2;
+    ghost.matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+            if (value > 0) drawBlock(ctx, ghost.x + x, ghost.y + y, value);
+        });
+    });
+    ctx.globalAlpha = 1.0; 
+}
+
+function drawBoard() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    board.forEach((row, y) => {
+        row.forEach((value, x) => {
+            if (value > 0) {
+                if (isAnimating && linesToClear.includes(y)) {
+                    let progress = animationTimer / ANIMATION_DURATION;
+                    let size = 1 - progress; 
+                    let offset = progress / 2; 
+                    ctx.fillStyle = 'white'; 
+                    ctx.fillRect(x + offset, y + offset, size, size);
+                } else {
+                    drawBlock(ctx, x, y, value);
+                }
+            }
+        });
+    });
+
+    if (!isAnimating) {
+        drawGhostPiece();
+        if (currentPiece) {
+            currentPiece.matrix.forEach((row, y) => {
+                row.forEach((value, x) => {
+                    if (value > 0) drawBlock(ctx, currentPiece.x + x, currentPiece.y + y, value);
+                });
+            });
+        }
+    }
+}
+
+function drawNextPiece() {
+    nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+    if (!nextPiece) return;
+    const xOffset = nextPiece.matrix.length === 4 ? 0 : 0.5;
+    const yOffset = nextPiece.matrix.length === 4 ? 0 : 1;
+    nextPiece.matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+            if (value > 0) drawBlock(nextCtx, x + xOffset, y + yOffset, value);
+        });
+    });
+}
+
+function drawHoldPiece() {
+    holdCtx.clearRect(0, 0, holdCanvas.width, holdCanvas.height);
+    if (!holdPiece) return;
+    const xOffset = holdPiece.matrix.length === 4 ? 0 : 0.5;
+    const yOffset = holdPiece.matrix.length === 4 ? 0 : 1;
+    holdPiece.matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+            if (value > 0) drawBlock(holdCtx, x + xOffset, y + yOffset, value);
+        });
+    });
+}
+
+// --- Game Logic ---
+function collide(board, piece) {
+    const m = piece.matrix;
+    for (let y = 0; y < m.length; ++y) {
+        for (let x = 0; x < m[y].length; ++x) {
+            if (m[y][x] !== 0 && (board[y + piece.y] && board[y + piece.y][x + piece.x]) !== 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function merge(board, piece) {
+    SoundEngine.lock(); 
+    piece.matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+            if (value !== 0) {
+                board[y + piece.y][x + piece.x] = value;
+            }
+        });
+    });
+}
+
+function checkLines() {
+    linesToClear = [];
+    for (let y = 0; y < ROWS; ++y) {
+        if (board[y].every(value => value !== 0)) {
+            linesToClear.push(y);
+        }
+    }
+
+    if (linesToClear.length > 0) {
+        SoundEngine.clear(); 
+        isAnimating = true;
+        animationTimer = 0;
+    } else {
+        spawnPiece();
+    }
+}
+
+function createPiece() {
+    const typeId = Math.floor(Math.random() * 7) + 1;
+    return { matrix: SHAPES[typeId], x: 3, y: 0 };
+}
+
+async function gameOver() {
+    isPlaying = false;
+    SoundEngine.gameover();
+    if (bgMusic && typeof bgMusic.pause === 'function') {
+        bgMusic.pause();
+    }
+    
+    // Save Local High Score
+    if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('tetrisHighScore', highScore);
+        if (highScoreElement) highScoreElement.innerText = highScore;
+    }
+
+    finalScoreElement.innerText = score;
+    gameOverScreen.classList.remove('hidden');
+
+    // --- NEW: Save to Firebase Firestore ---
+    if (score > 0) {
+        try {
+            const playerName = uiName.innerText || "GUEST";
+            const playerAvatar = uiAvatar.innerText || "🦊";
+            
+            await addDoc(collection(db, "leaderboard"), {
+                name: playerName,
+                avatar: playerAvatar,
+                score: score,
+                timestamp: new Date()
+            });
+            console.log("Score successfully uploaded to Firebase!");
+            
+            // Refresh the UI to show the new score
+            loadLeaderboard(); 
+        } catch (error) {
+            console.error("Error saving score to Firebase:", error);
+        }
+    }
+}
+
+function spawnPiece() {
+    if (!nextPiece) nextPiece = createPiece();
+    currentPiece = nextPiece;
+    nextPiece = createPiece();
+    hasHeld = false; 
+    drawNextPiece();
+
+    if (collide(board, currentPiece)) {
+        gameOver();
+    }
+}
+
+// --- Player Controls ---
+function playerDrop(isHardDrop = false) {
+    currentPiece.y++;
+    if (collide(board, currentPiece)) {
+        currentPiece.y--;
+        merge(board, currentPiece);
+        checkLines(); 
+    } else if (!isHardDrop) {
+        SoundEngine.move();
+    }
+    dropCounter = 0;
+}
+
+function playerMove(dir) {
+    currentPiece.x += dir;
+    if (collide(board, currentPiece)) {
+        currentPiece.x -= dir; 
+    } else {
+        SoundEngine.move();
+    }
+}
+
+function playerRotate() {
+    const pos = currentPiece.x;
+    let offset = 1;
+    for (let y = 0; y < currentPiece.matrix.length; ++y) {
+        for (let x = 0; x < y; ++x) {
+            [currentPiece.matrix[x][y], currentPiece.matrix[y][x]] = [currentPiece.matrix[y][x], currentPiece.matrix[x][y]];
+        }
+    }
+    currentPiece.matrix.forEach(row => row.reverse());
+
+    while (collide(board, currentPiece)) {
+        currentPiece.x += offset;
+        offset = -(offset + (offset > 0 ? 1 : -1));
+        if (offset > currentPiece.matrix[0].length) {
+            currentPiece.matrix.forEach(row => row.reverse());
+            for (let y = 0; y < currentPiece.matrix.length; ++y) {
+                for (let x = 0; x < y; ++x) {
+                    [currentPiece.matrix[x][y], currentPiece.matrix[y][x]] = [currentPiece.matrix[y][x], currentPiece.matrix[x][y]];
+                }
+            }
+            currentPiece.x = pos;
+            return;
+        }
+    }
+    SoundEngine.rotate();
+}
+
+function playerHold() {
+    if (hasHeld) return; 
+    SoundEngine.move(); 
+
+    if (holdPiece === null) {
+        holdPiece = { matrix: currentPiece.matrix, x: 3, y: 0 };
+        spawnPiece();
+    } else {
+        const temp = { matrix: currentPiece.matrix, x: 3, y: 0 };
+        currentPiece = holdPiece;
+        holdPiece = temp;
+        currentPiece.x = 3;
+        currentPiece.y = 0;
+    }
+    hasHeld = true;
+    drawHoldPiece();
+}
+
+// Keyboard Event Listeners
+document.addEventListener('keydown', event => {
+    if (!isPlaying || isAnimating || !currentPiece) return;
+
+    switch(event.keyCode) {
+        case 37: playerMove(-1); break;
+        case 39: playerMove(1); break;
+        case 40: playerDrop(); break;
+        case 38: playerRotate(); break;
+        case 32: 
+            SoundEngine.drop();
+            while (!collide(board, currentPiece)) { currentPiece.y++; }
+            currentPiece.y--; 
+            playerDrop(true);     
+            break;
+        case 67: playerHold(); break;
+    }
+});
+
+// --- Main Game Loop ---
+function update(time = 0) {
+    if (!isPlaying) return;
+
+    const deltaTime = time - lastTime;
+    lastTime = time;
+
+    if (isAnimating) {
+        animationTimer += deltaTime;
+        if (animationTimer >= ANIMATION_DURATION) {
+            isAnimating = false;
+            
+            linesToClear.forEach(y => {
+                board.splice(y, 1);
+                board.unshift(Array(COLS).fill(0));
+            });
+
+            const rowScores = [0, 100, 300, 500, 800];
+            score += rowScores[linesToClear.length] * level;
+            lines += linesToClear.length;
+            level = Math.floor(lines / 10) + 1;
+            dropInterval = Math.max(100, 1000 - (level - 1) * 100); 
+
+            scoreElement.innerText = score;
+            linesElement.innerText = lines;
+            levelElement.innerText = level;
+
+            spawnPiece(); 
+        }
+        
+        drawBoard();
+        animationId = requestAnimationFrame(update);
+        return; 
+    }
+
+    dropCounter += deltaTime;
+    if (dropCounter > dropInterval) {
+        playerDrop();
+    }
+
+    drawBoard();
+    animationId = requestAnimationFrame(update);
+}
+
+function startGame() {
+    board = Array.from({length: ROWS}, () => Array(COLS).fill(0));
+    score = 0;
+    lines = 0;
+    level = 1;
+    dropInterval = 1000;
+    isAnimating = false;
+    
+    scoreElement.innerText = score;
+    linesElement.innerText = lines;
+    levelElement.innerText = level;
+    
+    holdPiece = null;
+    drawHoldPiece();
+    
+    gameOverScreen.classList.add('hidden'); 
+    
+    isPlaying = true;
+    if (bgMusic && bgMusic.src && bgMusic.src !== window.location.href) {
+        bgMusic.currentTime = 0;
+        bgMusic.play().catch(e => {}); 
+    }
+    spawnPiece();
+    update();
+}
+
+document.getElementById('restart-btn').addEventListener('click', () => {
+    startGame();
+});

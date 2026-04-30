@@ -1,0 +1,327 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Rajdhani', sans-serif;
+    color: #fff;
+    background-color: #050510; /* Very dark base color */
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+
+/* Creating the 3D Animated Synthwave Grid */
+.app-background {
+    position: absolute;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1;
+}
+
+.app-background::after {
+    content: "";
+    position: absolute;
+    bottom: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    /* This creates the glowing grid lines */
+    background-image: 
+        linear-gradient(rgba(0, 229, 255, 0.3) 2px, transparent 2px),
+        linear-gradient(90deg, rgba(0, 229, 255, 0.3) 2px, transparent 2px);
+    background-size: 60px 60px;
+    /* This tilts the grid backwards to make it 3D */
+    transform: perspective(600px) rotateX(75deg) translateY(0);
+    animation: gridMove 3s linear infinite;
+    z-index: -1; 
+}
+
+/* Fades the grid out at the top so it doesn't just cut off */
+.app-background::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to bottom, #050510 30%, transparent 100%);
+    z-index: -1;
+}
+
+@keyframes gridMove {
+    0% { transform: perspective(600px) rotateX(75deg) translateY(0); }
+    100% { transform: perspective(600px) rotateX(75deg) translateY(60px); }
+}
+
+/* Ensure the game wrapper stays above the background */
+.game-wrapper {
+    display: flex;
+    gap: 20px;
+    padding: 30px;
+    z-index: 10; 
+}
+
+/* The core Glassmorphism class */
+.glass-panel {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    border-radius: 15px;
+}
+
+.game-wrapper {
+    display: flex;
+    gap: 20px;
+    padding: 30px;
+}
+
+.side-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    width: 180px;
+}
+
+.panel-box {
+    padding: 20px;
+    text-align: center;
+}
+
+.panel-box h2 {
+    font-size: 1.2rem;
+    letter-spacing: 2px;
+    color: #00e5ff; /* Neon Cyan */
+    text-shadow: 0 0 10px rgba(0, 229, 255, 0.5);
+    margin-bottom: 10px;
+}
+
+.panel-box p {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 15px;
+}
+
+.controls-text p {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 5px;
+}
+
+/* --- Replace your existing .main-board-container and canvas rules with this --- */
+
+.main-board-container {
+    padding: 10px;
+    /* We removed the grid background from here so it doesn't bleed into the padding! */
+}
+
+canvas {
+    display: block;
+    background: transparent;
+}
+
+/* Add this specific styling for the main game board */
+#board {
+    /* Gives the playable area a distinct dark backdrop */
+    background-color: rgba(0, 0, 0, 0.4); 
+    
+    /* Apply the grid perfectly to the canvas area only */
+    background-image: 
+        linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px);
+    background-size: 30px 30px; 
+    
+    /* Creates a hard visual boundary so you know exactly where the wall is */
+    border: 1px solid rgba(255, 255, 255, 0.2); 
+    border-radius: 4px;
+    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
+}
+/* Beautiful interactive button */
+.glass-btn {
+    width: 100%;
+    padding: 10px;
+    margin-top: 15px;
+    font-family: inherit;
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.glass-btn:hover {
+    background: rgba(0, 229, 255, 0.2);
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.4);
+}
+
+/* --- Game Over Modal --- */
+#game-over-screen {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    padding: 50px 20px;
+    text-align: center;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+    
+    /* Darker frosted glass with a red tint for Game Over */
+    background: rgba(10, 5, 20, 0.9);
+    border: 1px solid rgba(255, 0, 60, 0.3);
+    box-shadow: 0 0 50px rgba(255, 0, 60, 0.3);
+}
+
+#game-over-screen h1 {
+    font-size: 3.5rem;
+    color: #ff003c;
+    letter-spacing: 5px;
+    text-shadow: 0 0 20px rgba(255, 0, 60, 0.8);
+    margin-bottom: 10px;
+}
+
+#restart-btn {
+    margin-top: 20px;
+    background: rgba(255, 0, 60, 0.1);
+    border: 1px solid #ff003c;
+}
+
+#restart-btn:hover {
+    background: rgba(255, 0, 60, 0.3);
+    box-shadow: 0 0 15px rgba(255, 0, 60, 0.6);
+}
+
+/* Utility class to hide the modal */
+.hidden {
+    display: none !important;
+}
+
+/* --- Player Setup Screen & Profile --- */
+#setup-screen {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 400px;
+    padding: 40px;
+    text-align: center;
+    z-index: 200; /* Stays above the game over screen */
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    background: rgba(20, 20, 35, 0.85);
+}
+
+#setup-screen h1 {
+    font-size: 3rem;
+    color: #fff;
+    letter-spacing: 3px;
+    margin-bottom: 10px;
+}
+
+#player-name {
+    padding: 15px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1.2rem;
+    font-weight: bold;
+    background: rgba(0, 0, 0, 0.4);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    text-align: center;
+    border-radius: 10px;
+    outline: none;
+    transition: all 0.3s;
+}
+
+#player-name:focus {
+    border-color: #00e5ff;
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.3);
+}
+
+.avatar-selection {
+    display: flex;
+    justify-content: space-between;
+    margin: 10px 0;
+}
+
+.avatar-option {
+    font-size: 3rem;
+    cursor: pointer;
+    padding: 10px;
+    border-radius: 15px;
+    border: 2px solid transparent;
+    transition: all 0.2s ease;
+    filter: grayscale(50%);
+}
+
+.avatar-option:hover {
+    background: rgba(255, 255, 255, 0.1);
+    filter: grayscale(0%);
+    transform: scale(1.1);
+}
+
+.avatar-option.selected {
+    border-color: #00e5ff;
+    background: rgba(0, 229, 255, 0.15);
+    filter: grayscale(0%);
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.4);
+}
+
+.player-profile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.profile-avatar {
+    font-size: 3.5rem;
+    margin-bottom: 5px;
+}
+
+.profile-name {
+    font-size: 1.4rem;
+    color: #00e5ff;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+/* --- Custom Dropdown Menu Styling --- */
+.glass-input {
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 25px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    color: #00e5ff;
+    font-family: inherit;
+    font-size: 1.1rem;
+    font-weight: bold;
+    border-radius: 8px;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.glass-input:focus {
+    border-color: #ff007f;
+    box-shadow: 0 0 15px rgba(255, 0, 127, 0.3);
+}
+
+.glass-input option {
+    background: #1a1a2e; /* Dark background for dropdown items */
+    color: white;
+}
