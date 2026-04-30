@@ -336,3 +336,39 @@ canvas {
     background: rgba(20, 20, 35, 0.85);
     z-index: 200;
 }
+/* --- Combo & Attack Animations --- */
+
+/* Standard move/combo text (Pink) */
+.combo-anim {
+    font-size: 2.2rem;
+    font-weight: bold;
+    color: #ff007f;
+    text-shadow: 0 0 15px rgba(255, 0, 127, 0.8), 0 0 30px rgba(255, 0, 127, 0.5);
+    /* The animation lasts exactly 1.2 seconds, matching our fast-paced game */
+    animation: popUpFade 1.2s ease-out forwards;
+    margin-bottom: 5px;
+}
+
+/* Back-to-Back or Tetris text (Cyan/Green) */
+.b2b-anim {
+    font-size: 1.8rem;
+    font-weight: bold;
+    color: #00e5ff;
+    text-shadow: 0 0 15px rgba(0, 229, 255, 0.8);
+    animation: popUpFade 1.2s ease-out forwards;
+    margin-bottom: 5px;
+}
+
+.tetris-anim {
+    color: #00ff00 !important;
+    text-shadow: 0 0 15px rgba(0, 255, 0, 0.8), 0 0 30px rgba(0, 255, 0, 0.5) !important;
+}
+
+/* The magic motion sequence: Scale up, pause, float up, and fade out */
+@keyframes popUpFade {
+    0% { opacity: 0; transform: scale(0.5) translateY(20px); }
+    15% { opacity: 1; transform: scale(1.2) translateY(-10px); }
+    30% { transform: scale(1) translateY(-5px); }
+    70% { opacity: 1; transform: scale(1) translateY(0); }
+    100% { opacity: 0; transform: scale(0.8) translateY(-40px); }
+}
