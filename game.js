@@ -101,13 +101,11 @@ document.getElementById('play-solo-btn').addEventListener('click', () => {
     startAudio();
     isMultiplayer = false;
     
-    // Grab the main canvas
     canvas = document.getElementById('board'); 
     ctx = canvas.getContext('2d');
     
-    // BULLETPROOF FIX: Forcefully reset the canvas matrix, then scale it perfectly!
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // Resets any previous scaling
-    ctx.scale(BLOCK_SIZE, BLOCK_SIZE);  // Applies the exact 30x30 pixel size
+    ctx.setTransform(1, 0, 0, 1, 0, 0); 
+    ctx.scale(BLOCK_SIZE, BLOCK_SIZE);  
     
     profileView.classList.add('hidden');
     gameView.classList.remove('hidden');
@@ -123,9 +121,12 @@ let opponentBoardState = null;
 let pendingGarbage = 0;
 let totalGarbageReceived = 0;
 
-// NEW: Advanced Battle Tracking
 let comboCount = 0;
 let b2bActive = false;
+
+// NEW: T-Spin Tracker Variables
+let lastMoveWasRotate = false;
+let activeTSpin = "";
 
 // MULTIPLAYER SETUP
 const battleCanvasSelf = document.getElementById('battle-board-self');
@@ -167,11 +168,9 @@ async function findMatch() {
     opponentNameText.innerText = "WAITING...";
     isMultiplayer = true;
     
-    // Grab the Battle canvases
     canvas = battleCanvasSelf; 
     ctx = battleCtxSelf;
 
-    // BULLETPROOF FIX: Reset and scale both Battle canvases!
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
     battleCtxOpponent.setTransform(1, 0, 0, 1, 0, 0);
@@ -184,7 +183,6 @@ async function findMatch() {
     const playerName = currentUser ? currentUser.displayName : "GUEST";
 
     if (!snapshot.empty) {
-        // JOIN EXISTING ROOM
         const roomDoc = snapshot.docs[0];
         currentRoomId = roomDoc.id;
         isPlayer1 = false;
@@ -201,7 +199,6 @@ async function findMatch() {
         startGame();
         
     } else {
-        // CREATE NEW ROOM 
         isPlayer1 = true;
         const newRoomRef = await addDoc(collection(db, "rooms"), {
             status: "waiting",
@@ -255,7 +252,6 @@ const BLOCK_SIZE = 30;
 
 let canvas = document.getElementById('board');
 let ctx = canvas.getContext('2d');
-// FIX: We must scale the main canvas exactly once so blocks aren't 1 pixel tiny!
 ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -357,7 +353,6 @@ function createPiece() {
 
 // --- Garbage Application & Hole Consistency ---
 function addGarbageLines(amount) {
-    // 5. Hole Consistency: Generates one hole position for this entire batch of garbage
     const holeIndex = Math.floor(Math.random() * COLS);
     
     for (let i = 0; i < amount; i++) {
@@ -369,7 +364,7 @@ function addGarbageLines(amount) {
         }
         
         const newRow = Array(COLS).fill(8); 
-        newRow[holeIndex] = 0; // Same hole for all lines in this combo/attack
+        newRow[holeIndex] = 0; 
         board.push(newRow); 
     }
 }
@@ -468,6 +463,28 @@ function collide(board, piece) {
     return false;
 }
 
+// --- NEW: T-Spin Detection (3-Corner Rule) ---
+function checkTSpin() {
+    if (!currentPiece || currentPiece.matrix[1][1] !== 3) return ""; 
+    if (!lastMoveWasRotate) return "";
+
+    let cornersFilled = 0;
+    const corners = [
+        [0, 0], [0, 2], [2, 0], [2, 2] 
+    ];
+    
+    corners.forEach(([cx, cy]) => {
+        const checkX = currentPiece.x + cx;
+        const checkY = currentPiece.y + cy;
+        if (checkY >= ROWS || checkX < 0 || checkX >= COLS || (checkY >= 0 && board[checkY][checkX] !== 0)) {
+            cornersFilled++;
+        }
+    });
+
+    if (cornersFilled >= 3) return "T-SPIN";
+    return "";
+}
+
 async function merge(board, piece) {
     SoundEngine.lock(); 
     piece.matrix.forEach((row, y) => {
@@ -499,7 +516,6 @@ function checkLines() {
         isAnimating = true;
         animationTimer = 0;
     } else {
-        // BREAK COMBO: If a piece locks and clears zero lines, reset the combo meter.
         comboCount = 0;
         spawnPiece();
     }
@@ -552,17 +568,20 @@ function spawnPiece() {
     }
 }
 
-// Controls
+// --- UPDATED CONTROLS (T-Spin State Tracking & SRS Kicks) ---
 function playerDrop(isHardDrop = false) {
     currentPiece.y++;
     if (collide(board, currentPiece)) {
         currentPiece.y--;
+        // Check for T-Spin right before the piece locks into the board
+        activeTSpin = checkTSpin();
         merge(board, currentPiece);
         checkLines(); 
     } else if (!isHardDrop) {
         SoundEngine.move();
     }
     dropCounter = 0;
+    if (!isHardDrop) lastMoveWasRotate = false; 
 }
 
 function playerMove(dir) {
@@ -571,12 +590,14 @@ function playerMove(dir) {
         currentPiece.x -= dir; 
     } else {
         SoundEngine.move();
+        lastMoveWasRotate = false; 
     }
 }
 
 function playerRotate() {
     const pos = currentPiece.x;
-    let offset = 1;
+    const posY = currentPiece.y;
+    
     for (let y = 0; y < currentPiece.matrix.length; ++y) {
         for (let x = 0; x < y; ++x) {
             [currentPiece.matrix[x][y], currentPiece.matrix[y][x]] = [currentPiece.matrix[y][x], currentPiece.matrix[x][y]];
@@ -584,21 +605,35 @@ function playerRotate() {
     }
     currentPiece.matrix.forEach(row => row.reverse());
 
-    while (collide(board, currentPiece)) {
-        currentPiece.x += offset;
-        offset = -(offset + (offset > 0 ? 1 : -1));
-        if (offset > currentPiece.matrix[0].length) {
-            currentPiece.matrix.forEach(row => row.reverse());
-            for (let y = 0; y < currentPiece.matrix.length; ++y) {
-                for (let x = 0; x < y; ++x) {
-                    [currentPiece.matrix[x][y], currentPiece.matrix[y][x]] = [currentPiece.matrix[y][x], currentPiece.matrix[x][y]];
-                }
-            }
-            currentPiece.x = pos;
-            return;
+    // Super Rotation System (SRS) Simplified Kick Table
+    const kicks = [
+        [0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, -1]
+    ];
+    
+    let rotated = false;
+    for (const kick of kicks) {
+        currentPiece.x = pos + kick[0];
+        currentPiece.y = posY + kick[1];
+        if (!collide(board, currentPiece)) {
+            rotated = true;
+            break;
         }
     }
-    SoundEngine.rotate();
+
+    if (!rotated) {
+        // Reverse the matrix rotation if all kicks fail
+        currentPiece.matrix.forEach(row => row.reverse());
+        for (let y = 0; y < currentPiece.matrix.length; ++y) {
+            for (let x = 0; x < y; ++x) {
+                [currentPiece.matrix[x][y], currentPiece.matrix[y][x]] = [currentPiece.matrix[y][x], currentPiece.matrix[x][y]];
+            }
+        }
+        currentPiece.x = pos;
+        currentPiece.y = posY;
+    } else {
+        SoundEngine.rotate();
+        lastMoveWasRotate = true; 
+    }
 }
 
 function playerHold() {
@@ -656,27 +691,35 @@ function update(time = 0) {
             const linesCleared = linesToClear.length;
             
             // --- ADVANCED BATTLE LOGIC START ---
+            comboCount++; 
             
-            // 2. The Combo Algorithm
-            comboCount++; // Increment combo (1st clear = combo 1, 2nd clear = combo 2)
-            
-            // 1. The Attack Table
             let baseGarbage = 0;
             let isDifficult = false;
-            if (linesCleared === 2) baseGarbage = 1;
-            if (linesCleared === 3) baseGarbage = 2;
-            if (linesCleared === 4) {
-                baseGarbage = 4;
-                isDifficult = true; // Tetris is considered a "difficult" move
+            let animationText = "";
+
+            // Evaluate T-Spins vs Standard Clears
+            if (activeTSpin === "T-SPIN") {
+                isDifficult = true;
+                if (linesCleared === 1) { baseGarbage = 2; animationText = "T-SPIN SINGLE!"; }
+                if (linesCleared === 2) { baseGarbage = 4; animationText = "T-SPIN DOUBLE!"; }
+                if (linesCleared === 3) { baseGarbage = 6; animationText = "T-SPIN TRIPLE!"; }
+                if (linesCleared === 0) { animationText = "T-SPIN!"; } 
+            } else {
+                if (linesCleared === 2) baseGarbage = 1;
+                if (linesCleared === 3) baseGarbage = 2;
+                if (linesCleared === 4) {
+                    baseGarbage = 4;
+                    isDifficult = true; 
+                }
             }
 
-            // 3. Back-to-Back (B2B) Bonus
+            // Back-to-Back (B2B) Bonus
             let b2bBonus = 0;
             if (isDifficult) {
-                if (b2bActive) b2bBonus = 1; // Award +1 if previous move was also difficult
+                if (b2bActive) b2bBonus = 1; 
                 b2bActive = true; 
-            } else {
-                b2bActive = false; // Break the chain if we cleared 1, 2, or 3 lines
+            } else if (linesCleared > 0) {
+                b2bActive = false; 
             }
 
             // Calculate Combo Bonus
@@ -690,10 +733,12 @@ function update(time = 0) {
             let totalGarbageGenerated = baseGarbage + b2bBonus + comboBonus;
             console.log(`Attack! Base: ${baseGarbage}, B2B: ${b2bBonus}, Combo: ${comboBonus}`);
 
-            // NEW: Trigger the visual animation!
-            showComboAnimation(comboCount, (b2bActive && isDifficult), linesCleared);
+            // Trigger visual animation if we did a T-Spin OR cleared 2+ lines
+            if (linesCleared >= 2 || animationText) {
+                showComboAnimation(comboCount, (b2bActive && isDifficult), linesCleared, animationText);
+            }
 
-            // 4. Garbage Cancellation (Defense)
+            // Garbage Cancellation (Defense)
             if (totalGarbageGenerated > 0 && pendingGarbage > 0) {
                 if (totalGarbageGenerated >= pendingGarbage) {
                     totalGarbageGenerated -= pendingGarbage;
@@ -704,6 +749,8 @@ function update(time = 0) {
                 }
             }
 
+            // Reset T-Spin state for the next turn
+            activeTSpin = "";
             // --- ADVANCED BATTLE LOGIC END ---
 
             if(!isMultiplayer) {
@@ -718,7 +765,6 @@ function update(time = 0) {
                 levelElement.innerText = level;
             }
 
-            // Send remaining attack to the opponent
             if (isMultiplayer && currentRoomId) {
                 const updateData = isPlayer1 ? { player1Board: board } : { player2Board: board };
                 
@@ -755,14 +801,12 @@ function update(time = 0) {
 }
 
 // --- COMBO ANIMATION SYSTEM ---
-function showComboAnimation(comboCount, isB2B, linesCleared) {
+function showComboAnimation(comboCount, isB2B, linesCleared, customText = "") {
     const overlay = document.getElementById('combo-text-overlay');
     if (!overlay) return;
     
-    // Clear any previous animations currently playing
     overlay.innerHTML = ''; 
     
-    // 1. Check for Back-To-Back
     if (isB2B) {
         const b2bEl = document.createElement('div');
         b2bEl.className = 'b2b-anim';
@@ -770,22 +814,22 @@ function showComboAnimation(comboCount, isB2B, linesCleared) {
         overlay.appendChild(b2bEl);
     }
     
-    // 2. Check for Move Type (Double, Triple, Tetris)
-    let moveName = "";
-    if (linesCleared === 2) moveName = "DOUBLE";
-    if (linesCleared === 3) moveName = "TRIPLE";
-    if (linesCleared === 4) moveName = "TETRIS!";
+    // Apply custom text if it's a T-Spin, otherwise apply standard names
+    let moveName = customText;
+    if (!moveName) {
+        if (linesCleared === 2) moveName = "DOUBLE";
+        if (linesCleared === 3) moveName = "TRIPLE";
+        if (linesCleared === 4) moveName = "TETRIS!";
+    }
     
     if (moveName) {
         const moveEl = document.createElement('div');
         moveEl.className = 'combo-anim';
-        if (linesCleared === 4) moveEl.classList.add('tetris-anim'); // Make Tetris green!
+        if (linesCleared === 4 || customText.includes("T-SPIN")) moveEl.classList.add('tetris-anim'); 
         moveEl.innerText = moveName;
         overlay.appendChild(moveEl);
     }
 
-    // 3. Check for Combos (Only display if it's 1 Combo or higher)
-    // Note: Tetris rules state that 1 clear = 0 Combo. The 2nd clear = 1 Combo.
     const actualCombo = comboCount - 1; 
     if (actualCombo > 0) {
         const comboEl = document.createElement('div');
@@ -810,6 +854,8 @@ function startGame() {
     comboCount = 0;
     b2bActive = false;
     pieceBag = []; 
+    lastMoveWasRotate = false;
+    activeTSpin = "";
     
     if(!isMultiplayer) {
         scoreElement.innerText = score;
